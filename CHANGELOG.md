@@ -1,3 +1,8 @@
+## 1.1.3
+* Fixed `lateinit property reportUrlProvider has not been initialized` error on Android when `init()` is called after the Flutter engine has been recreated or from another Flutter engine
+* Updated Piano Analytics Android SDK to 3.6.0
+* Android minSdk is now 23 (required by Piano Analytics Android SDK 3.6.0)
+
 ## 1.1.2
 * Fixed crash when setting an empty array property on Android
 * Fixed DateTime values being sent as microseconds instead of milliseconds to the native SDKs

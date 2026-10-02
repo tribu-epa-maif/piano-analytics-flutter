@@ -69,6 +69,54 @@ internal class PianoAnalyticsPluginTest : BasePluginTest() {
     }
 
     @Test
+    fun `Check init by new plugin instance after native SDK initialized`() {
+        val pianoAnalytics: PianoAnalytics = mockk()
+        var initialized = false
+        every { PianoAnalytics.init(any(), any(), any(), any(), any()) } answers {
+            initialized = true
+            pianoAnalytics
+        }
+        every { PianoAnalytics.getInstance() } answers {
+            if (initialized) pianoAnalytics else throw IllegalStateException()
+        }
+        every { pianoAnalytics.customVisitorId = any() } answers {}
+        every { pianoAnalytics.customVisitorId } returns "WEB-192203AJ"
+
+        call(
+            "init", mapOf(
+                "site" to 123456789,
+                "collectDomain" to "xxxxxxx.pa-cd.com",
+                "visitorIDType" to "CUSTOM"
+            ), null
+        ) { PianoAnalyticsPlugin() }
+
+        val slot = slot<Configuration>()
+        verify(exactly = 1) { PianoAnalytics.init(any(), capture(slot), any(), any(), any()) }
+
+        // Flutter engine is recreated, but native SDK is still initialized
+        val plugin = PianoAnalyticsPlugin()
+        val initResult: MethodChannel.Result = mockk()
+        every { initResult.success(any()) } returns Unit
+        call(
+            "init", mapOf(
+                "site" to 987654321,
+                "collectDomain" to "yyyyyyy.pa-cd.com",
+                "visitorIDType" to "CUSTOM"
+            ), initResult
+        ) { plugin }
+
+        verify { initResult.success(null) }
+        verify(exactly = 1) { PianoAnalytics.init(any(), any(), any(), any(), any()) }
+        assertEquals(987654321, slot.captured.site)
+        assertEquals("yyyyyyy.pa-cd.com", slot.captured.collectDomain)
+
+        val visitorIdResult: MethodChannel.Result = mockk()
+        every { visitorIdResult.success(any()) } returns Unit
+        call("getVisitorId", null, visitorIdResult) { plugin }
+        verify { visitorIdResult.success("WEB-192203AJ") }
+    }
+
+    @Test
     fun `Check send`() {
         val pianoAnalytics: PianoAnalytics = mockk()
         every { PianoAnalytics.getInstance() } returns pianoAnalytics

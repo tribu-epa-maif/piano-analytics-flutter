@@ -49,12 +49,11 @@ class HttpDataProvider : CustomHttpDataProvider {
 }
 
 class PianoAnalyticsPlugin(
-    private val httpDataProvider: HttpDataProvider = HttpDataProvider()
+    private val httpDataProvider: HttpDataProvider = sharedHttpDataProvider
 ) : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     private lateinit var channel: MethodChannel
-    private lateinit var visitorIDType: VisitorIDType
-    private lateinit var reportUrlProvider: MutableReportUrlProvider
+    private lateinit var applicationContext: Context
 
     private var context: WeakReference<Context?> = WeakReference(null)
 
@@ -75,6 +74,7 @@ class PianoAnalyticsPlugin(
     }
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        applicationContext = flutterPluginBinding.applicationContext
         channel = MethodChannel(
             flutterPluginBinding.binaryMessenger,
             "piano_analytics",
@@ -118,43 +118,45 @@ class PianoAnalyticsPlugin(
     }
 
     private fun handleInit(call: MethodCall) {
-        try {
-            PianoAnalytics.getInstance()
-            reportUrlProvider.update(
-                collectDomain = call.arg("collectDomain"),
-                site = call.arg("site")
-            )
-        } catch (_: IllegalStateException) {
-            visitorIDType = getVisitorIDType(call.arg("visitorIDType"))
-            call.argument<Map<String, String>>("headers")?.let {
-                httpDataProvider.headers.putAll(it)
+        if (isPianoAnalyticsInitialized()) {
+            reportUrlProvider?.run {
+                update(
+                    collectDomain = call.arg("collectDomain"),
+                    site = call.arg("site")
+                )
+                return
             }
-            call.argument<Map<String, String>>("query")?.let {
-                httpDataProvider.parameters.putAll(it)
-            }
-            reportUrlProvider = MutableReportUrlProvider(
-                collectDomain = call.arg("collectDomain"),
-                site = call.arg("site")
-            )
-            val pianoAnalytics = PianoAnalytics.init(
-                context = context.get() ?: error("Activity not attached"),
-                configuration = Configuration.Builder(
-                    reportUrlProvider = reportUrlProvider,
-                    visitorIDType = visitorIDType,
-                    visitorStorageLifetime = call.argument<Int>("storageLifetimeVisitor")
-                        ?: Configuration.DEFAULT_VISITOR_STORAGE_LIFETIME,
-                    visitorStorageMode = getVisitorStorageMode(call.argument("visitorStorageMode")),
-                    ignoreLimitedAdTracking = call.argument<Boolean>("ignoreLimitedAdvertisingTracking")
-                        ?: false,
-                ).build(),
-                pianoConsents = getPianoConsents(),
-                customHttpDataProvider = httpDataProvider
-            )
+        }
 
-            if (visitorIDType == VisitorIDType.CUSTOM) {
-                call.argument<String>("visitorId")?.let {
-                    pianoAnalytics.customVisitorId = it
-                }
+        visitorIDType = getVisitorIDType(call.arg("visitorIDType"))
+        call.argument<Map<String, String>>("headers")?.let {
+            httpDataProvider.headers.putAll(it)
+        }
+        call.argument<Map<String, String>>("query")?.let {
+            httpDataProvider.parameters.putAll(it)
+        }
+        reportUrlProvider = MutableReportUrlProvider(
+            collectDomain = call.arg("collectDomain"),
+            site = call.arg("site")
+        )
+        val pianoAnalytics = PianoAnalytics.init(
+            context = context.get() ?: applicationContext,
+            configuration = Configuration.Builder(
+                reportUrlProvider = reportUrlProvider,
+                visitorIDType = visitorIDType,
+                visitorStorageLifetime = call.argument<Int>("storageLifetimeVisitor")
+                    ?: Configuration.DEFAULT_VISITOR_STORAGE_LIFETIME,
+                visitorStorageMode = getVisitorStorageMode(call.argument("visitorStorageMode")),
+                ignoreLimitedAdTracking = call.argument<Boolean>("ignoreLimitedAdvertisingTracking")
+                    ?: false,
+            ).build(),
+            pianoConsents = getPianoConsents(),
+            customHttpDataProvider = httpDataProvider
+        )
+
+        if (visitorIDType == VisitorIDType.CUSTOM) {
+            call.argument<String>("visitorId")?.let {
+                pianoAnalytics.customVisitorId = it
             }
         }
     }
@@ -267,6 +269,21 @@ class PianoAnalyticsPlugin(
     }
 
     companion object {
+
+        // The native PianoAnalytics is a process-wide singleton which keeps the providers passed
+        // on the first init, so they must outlive the plugin instance: Flutter engine can be
+        // recreated or several engines can exist in one process, each with its own plugin instance
+        private val sharedHttpDataProvider = HttpDataProvider()
+        private var reportUrlProvider: MutableReportUrlProvider? = null
+        private var visitorIDType: VisitorIDType = VisitorIDType.UUID
+
+        @JvmStatic
+        private fun isPianoAnalyticsInitialized() = try {
+            PianoAnalytics.getInstance()
+            true
+        } catch (_: IllegalStateException) {
+            false
+        }
 
         @JvmStatic
         private fun getPianoConsents() = try {
